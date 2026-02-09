@@ -15,7 +15,3 @@ A modern ping pong score tracker.
 
 **Match history**  
 ![Match history](screenshots/match_history.png)
-
-## Live
-
-[nifemilawal.com/serve](https://nifemilawal.com/serve)
