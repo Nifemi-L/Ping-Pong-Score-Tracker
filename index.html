@@ -46,6 +46,25 @@
           <button id="stats-toggle" class="icon-btn" aria-label="Toggle stats">
             <ion-icon name="stats-chart-outline"></ion-icon>
           </button>
+          <div class="music-menu">
+            <button id="music-toggle" class="icon-btn" aria-label="Background music" aria-expanded="false">
+              <ion-icon name="musical-notes-outline"></ion-icon>
+            </button>
+            <div id="music-panel" class="music-panel">
+              <div class="music-panel-header">Background music</div>
+              <div class="music-options">
+                <button id="music-off" class="music-btn active" data-track="off">Off</button>
+                <button id="music-arcade" class="music-btn" data-track="arcade">Arcade</button>
+                <button id="music-funky" class="music-btn" data-track="funky">Funky</button>
+                <button id="music-synth" class="music-btn" data-track="synth">Synth</button>
+                <button id="music-chill" class="music-btn" data-track="chill">Chill</button>
+              </div>
+            </div>
+          </div>
+          <button id="sound-toggle" class="icon-btn" aria-label="Toggle sound">
+            <ion-icon name="volume-high-outline" class="sound-on-icon"></ion-icon>
+            <ion-icon name="volume-mute-outline" class="sound-off-icon"></ion-icon>
+          </button>
           <button id="theme-toggle" class="icon-btn" aria-label="Toggle theme">
             <ion-icon name="sunny-outline" class="light-icon"></ion-icon>
             <ion-icon name="moon-outline" class="dark-icon"></ion-icon>

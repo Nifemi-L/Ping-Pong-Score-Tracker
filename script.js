@@ -33,6 +33,10 @@ const refs = {
     serves3Btn: document.getElementById('serves-3'),
     serves5Btn: document.getElementById('serves-5'),
     themeToggle: document.getElementById('theme-toggle'),
+    soundToggle: document.getElementById('sound-toggle'),
+    musicToggle: document.getElementById('music-toggle'),
+    musicPanel: document.getElementById('music-panel'),
+    musicBtns: document.querySelectorAll('.music-btn'),
     statsToggle: document.getElementById('stats-toggle'),
     statsPanel: document.querySelector('.stats-panel'),
     closeStats: document.getElementById('close-stats'),
@@ -55,9 +59,237 @@ const refs = {
     },
     matches: [],
     currentServer: 1,
-    servesPerPlayer: parseInt(localStorage.getItem('pp_serves')) || 2
+    servesPerPlayer: parseInt(localStorage.getItem('pp_serves')) || 2,
+    soundMuted: localStorage.getItem('pp_muted') === 'true',
+    musicTrack: localStorage.getItem('pp_music_track') || 'off'
   };
-  
+
+  // Audio: synthesized sound effects
+  let audioCtx = null;
+  function getAudioCtx() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    return audioCtx;
+  }
+
+  function playTone(freq, duration, delay = 0, volume = 0.2, type = 'sine') {
+    if (state.soundMuted) return;
+    const ctx = getAudioCtx();
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    oscillator.type = type;
+    oscillator.frequency.value = freq;
+    const startTime = ctx.currentTime + delay;
+    gainNode.gain.setValueAtTime(volume, startTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+    oscillator.start(startTime);
+    oscillator.stop(startTime + duration);
+  }
+
+  // A soft paddle "tock" when a point is scored - a quick downward
+  // pitch glide reads as a percussive knock rather than a beep
+  function playPointSound() {
+    if (state.soundMuted) return;
+    const ctx = getAudioCtx();
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    oscillator.type = 'triangle';
+    const startTime = ctx.currentTime;
+    const duration = 0.08;
+    oscillator.frequency.setValueAtTime(320, startTime);
+    oscillator.frequency.exponentialRampToValueAtTime(120, startTime + duration);
+    gainNode.gain.setValueAtTime(0.12, startTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+    oscillator.start(startTime);
+    oscillator.stop(startTime + duration);
+  }
+
+  // A short ascending chime when a match is won
+  function playWinSound() {
+    playTone(523.25, 0.15, 0);
+    playTone(659.25, 0.15, 0.15);
+    playTone(783.99, 0.35, 0.3);
+  }
+
+  // Update sound toggle button state
+  function updateSoundButton() {
+    refs.soundToggle.classList.toggle('muted', state.soundMuted);
+  }
+
+  // Update music track selector buttons and the header icon's active state
+  function updateMusicButtons() {
+    refs.musicBtns.forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.track === state.musicTrack);
+    });
+    refs.musicToggle.classList.toggle('active', state.musicTrack !== 'off');
+  }
+
+  // Switch the background music track (or turn it off)
+  function changeMusicTrack(track) {
+    if (state.musicTrack === track) return;
+    state.musicTrack = track;
+    localStorage.setItem('pp_music_track', track);
+    updateMusicButtons();
+    stopMusic();
+    startMusic();
+  }
+
+  // Open/close the collapsible background music popover
+  function toggleMusicPanel(open) {
+    const shouldOpen = open !== undefined ? open : !refs.musicPanel.classList.contains('open');
+    refs.musicPanel.classList.toggle('open', shouldOpen);
+    refs.musicToggle.setAttribute('aria-expanded', shouldOpen);
+  }
+
+  // Procedural background music - four looping tracks synthesized with the
+
+  // Short percussive/melodic note - used by the arcade, funky and synth tracks
+  function playMelodicNote(freq, type, duration, volume) {
+    const ctx = getAudioCtx();
+    const now = ctx.currentTime;
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    oscillator.type = type;
+    oscillator.frequency.value = freq;
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    const attack = Math.min(0.015, duration * 0.3);
+    gainNode.gain.setValueAtTime(0, now);
+    gainNode.gain.linearRampToValueAtTime(volume, now + attack);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + duration);
+    oscillator.start(now);
+    oscillator.stop(now + duration + 0.02);
+  }
+
+  // Sustained pad chord - used by the chill track
+  function playPadChord(freqs, duration) {
+    const ctx = getAudioCtx();
+    const now = ctx.currentTime;
+    const chordGain = ctx.createGain();
+    chordGain.connect(ctx.destination);
+    chordGain.gain.setValueAtTime(0, now);
+    chordGain.gain.linearRampToValueAtTime(0.045, now + 1.2);
+    chordGain.gain.setValueAtTime(0.045, now + duration - 1.2);
+    chordGain.gain.linearRampToValueAtTime(0, now + duration);
+
+    freqs.forEach(freq => {
+      const oscillator = ctx.createOscillator();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = freq;
+      oscillator.connect(chordGain);
+      oscillator.start(now);
+      oscillator.stop(now + duration);
+    });
+  }
+
+  let musicTimerId = null;
+  let musicGeneration = 0;
+
+  // Arcade: bouncy 8-bit melody with a steady bass thump
+  const arcadeLead = [
+    523.25, 659.25, 783.99, 659.25, 523.25, 659.25, 783.99, 1046.50,
+    783.99, 659.25, 523.25, 659.25, 783.99, 659.25, 587.33, 0
+  ];
+  const arcadeStep = 0.15;
+
+  function scheduleArcadeLoop(generation, step) {
+    if (generation !== musicGeneration) return;
+    const note = arcadeLead[step % arcadeLead.length];
+    if (note) playMelodicNote(note, 'square', 0.12, 0.05);
+    if (step % 4 === 0) playMelodicNote(130.81, 'square', 0.13, 0.05);
+    musicTimerId = setTimeout(() => scheduleArcadeLoop(generation, step + 1), arcadeStep * 1000);
+  }
+
+  // Funky: syncopated bass groove with chord stabs
+  const funkyBass = [
+    98.00, 0, 98.00, 116.54, 0, 98.00, 0, 130.81,
+    98.00, 0, 98.00, 116.54, 0, 98.00, 0, 0
+  ];
+  const funkyStabs = { 3: [293.66, 349.23, 440.00], 11: [293.66, 349.23, 440.00] };
+  const funkyStep = 0.22;
+
+  function scheduleFunkyLoop(generation, step) {
+    if (generation !== musicGeneration) return;
+    const idx = step % funkyBass.length;
+    const bassNote = funkyBass[idx];
+    if (bassNote) playMelodicNote(bassNote, 'sawtooth', 0.18, 0.06);
+    const stab = funkyStabs[idx];
+    if (stab) stab.forEach(freq => playMelodicNote(freq, 'triangle', 0.15, 0.035));
+    musicTimerId = setTimeout(() => scheduleFunkyLoop(generation, step + 1), funkyStep * 1000);
+  }
+
+  // Synth: driving retro arpeggio over a four-chord progression
+  const synthChords = [
+    [220.00, 261.63, 329.63, 440.00], // Am
+    [174.61, 220.00, 261.63, 349.23], // F
+    [261.63, 329.63, 392.00, 523.25], // C
+    [196.00, 246.94, 293.66, 392.00]  // G
+  ];
+  const synthStep = 0.14;
+
+  function scheduleSynthLoop(generation, step) {
+    if (generation !== musicGeneration) return;
+    const chord = synthChords[Math.floor(step / 8) % synthChords.length];
+    const beat = step % 8;
+    const noteIndex = beat < 4 ? beat : 7 - beat;
+    playMelodicNote(chord[noteIndex], 'sawtooth', 0.13, 0.04);
+    musicTimerId = setTimeout(() => scheduleSynthLoop(generation, step + 1), synthStep * 1000);
+  }
+
+  // Chill: slow, mellow four-chord pad loop
+  const chillChords = [
+    [220.00, 261.63, 329.63], // Am
+    [174.61, 220.00, 261.63], // F
+    [261.63, 329.63, 392.00], // C
+    [196.00, 246.94, 293.66]  // G
+  ];
+  const chillStep = 4.5;
+
+  function scheduleChillLoop(generation, step) {
+    if (generation !== musicGeneration) return;
+    playPadChord(chillChords[step % chillChords.length], chillStep);
+    musicTimerId = setTimeout(() => scheduleChillLoop(generation, step + 1), chillStep * 1000);
+  }
+
+  function startMusic() {
+    if (state.soundMuted || state.musicTrack === 'off') return;
+    musicGeneration++;
+    const generation = musicGeneration;
+    if (state.musicTrack === 'arcade') scheduleArcadeLoop(generation, 0);
+    else if (state.musicTrack === 'funky') scheduleFunkyLoop(generation, 0);
+    else if (state.musicTrack === 'synth') scheduleSynthLoop(generation, 0);
+    else if (state.musicTrack === 'chill') scheduleChillLoop(generation, 0);
+  }
+
+  function stopMusic() {
+    musicGeneration++; // invalidates any pending scheduled note
+    if (musicTimerId) {
+      clearTimeout(musicTimerId);
+      musicTimerId = null;
+    }
+  }
+
+  // Browsers block audio until a user gesture; if a track was left selected
+  // from a previous session, start it as soon as the user interacts with the page
+  function tryAutoStartMusic() {
+    if (state.musicTrack === 'off' || state.soundMuted) return;
+    const ctx = getAudioCtx();
+    if (ctx.state === 'suspended') {
+      const resumeAndStart = () => {
+        ctx.resume().then(startMusic);
+        document.removeEventListener('click', resumeAndStart);
+      };
+      document.addEventListener('click', resumeAndStart, { once: true });
+    } else {
+      startMusic();
+    }
+  }
+
   // Load saved data
   function loadSavedData() {
     // Load theme
@@ -101,6 +333,13 @@ const refs = {
     
     // Set initial server indicator
     updateServeIndicator();
+
+    // Set initial sound button state
+    updateSoundButton();
+
+    // Set initial music button state and try to resume music from last session
+    updateMusicButtons();
+    tryAutoStartMusic();
   }
   
   // Update game mode buttons
@@ -109,7 +348,29 @@ const refs = {
     refs.mode11Btn.classList.toggle('active', activePoint === 11);
     refs.mode21Btn.classList.toggle('active', activePoint === 21);
   }
-  
+
+  // Change the game mode (points to win). Only resets the current game if
+  // either player's score would already be at or past the new target.
+  function changeGameMode(newPoint) {
+    if (state.matchPoint === newPoint) return;
+
+    const needsReset = getScore(1) >= newPoint || getScore(2) >= newPoint;
+
+    if (needsReset && !confirm(`Change game mode to ${newPoint} points? Current scores exceed that target, so the game will be reset.`)) {
+      return;
+    }
+
+    state.matchPoint = newPoint;
+    localStorage.setItem('pp_match', newPoint);
+    updateModeButtons();
+
+    if (needsReset) {
+      reset();
+    } else {
+      calculateNextServer();
+    }
+  }
+
   // Update serves buttons
   function updateServesButtons() {
     const activeServes = state.servesPerPlayer;
@@ -225,7 +486,10 @@ const refs = {
     
     // Update statistics
     state.stats[player].points++;
-    
+
+    // Play point sound
+    playPointSound();
+
     // Add the pulse animation
     refs.scores[player].classList.add('pulse');
     setTimeout(() => refs.scores[player].classList.remove('pulse'), 400);
@@ -267,9 +531,12 @@ const refs = {
       saveStats();
       saveMatches();
       
+      // Play win sound
+      playWinSound();
+
       // Show winner
       showWinner(winner, score1, score2);
-      
+
       // Fire confetti
       setTimeout(fireConfetti, 300);
     }
@@ -370,27 +637,8 @@ const refs = {
     });
     
     // Game mode buttons
-    refs.mode11Btn.addEventListener('click', () => {
-      state.matchPoint = 11;
-      localStorage.setItem('pp_match', 11);
-      updateModeButtons();
-      if (getScore(1) > 0 || getScore(2) > 0) {
-        if (confirm('Change game mode to 11 points? Current game will be reset.')) {
-          reset();
-        }
-      }
-    });
-    
-    refs.mode21Btn.addEventListener('click', () => {
-      state.matchPoint = 21;
-      localStorage.setItem('pp_match', 21);
-      updateModeButtons();
-      if (getScore(1) > 0 || getScore(2) > 0) {
-        if (confirm('Change game mode to 21 points? Current game will be reset.')) {
-          reset();
-        }
-      }
-    });
+    refs.mode11Btn.addEventListener('click', () => changeGameMode(11));
+    refs.mode21Btn.addEventListener('click', () => changeGameMode(21));
     
     // Serves per player buttons
     refs.serves2Btn.addEventListener('click', () => {
@@ -419,7 +667,44 @@ const refs = {
       document.body.classList.toggle('dark-theme');
       localStorage.setItem('pp_theme', document.body.classList.contains('dark-theme') ? 'dark' : 'light');
     });
-    
+
+    // Sound toggle
+    refs.soundToggle.addEventListener('click', () => {
+      state.soundMuted = !state.soundMuted;
+      localStorage.setItem('pp_muted', state.soundMuted);
+      updateSoundButton();
+      if (state.soundMuted) {
+        stopMusic();
+      } else {
+        startMusic();
+      }
+    });
+
+    // Music toggle - opens/closes the collapsible track picker
+    refs.musicToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleMusicPanel();
+    });
+
+    // Don't let clicks inside the panel bubble up and close it immediately
+    refs.musicPanel.addEventListener('click', (e) => e.stopPropagation());
+
+    // Close the panel on any outside click
+    document.addEventListener('click', () => toggleMusicPanel(false));
+
+    // Close the panel on Escape
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') toggleMusicPanel(false);
+    });
+
+    // Music track selector - picking a track also collapses the panel
+    refs.musicBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        changeMusicTrack(btn.dataset.track);
+        toggleMusicPanel(false);
+      });
+    });
+
     // Stats panel
     refs.statsToggle.addEventListener('click', () => {
       refs.statsPanel.classList.toggle('active');
